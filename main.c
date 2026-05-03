@@ -55,9 +55,11 @@ void lsh_loop(void) {
         }
 
         line = lsh_read_line();
-
         args = lsh_split_line(line);
         status = lsh_execute(args);
+
+        free(line);
+        free(args);
     } while (status);
 }
 
@@ -71,6 +73,7 @@ char* lsh_read_line(void) {
     // 注意：getline 保留换行符
     // getline 需要修改这两个变量,所以传入的是引用
 
+    // 这里的 line是被 getline 自动调用 malloc 分配空间的,所以后面要 free (line) 
     if(getline(&line, &buff_size,stdin) == -1) {
         if(feof(stdin)){
             exit(EXIT_SUCESS);
@@ -138,8 +141,8 @@ char ** lsh_split_line (char* line) {
                 fprintf(stderr,"allocation errors \n");
                 exit(EXIT_FAILURE);
             }
-            token = strtok(NULL,LSH_TOK_DELIM);
         }
+        token = strtok(NULL,LSH_TOK_DELIM);
     }
     tokens[position] = NULL;
     return tokens;
@@ -163,6 +166,7 @@ int lsh_num_builtins () {
 // 内置函数实现
 
 int lsh_cd(char ** args) {
+    printf("Now you are using Tian's shell \n"); 
     if(args[1] == NULL) {
         fprintf(stderr, "lsh : expected arguments to \"cd\" \n");
     } else {
@@ -179,6 +183,24 @@ int lsh_exit (char ** args) {
 }
 
 int lsh_launch(char **args) {
+    // 为什么我们要单独给外部的程序开一个子进程呢??
+    // 因为 exec() \ execvp() 会完全取代这个子进程(保留 pid)!
+    // 一旦 exec("ls",args) 执行，那么
+    // 步骤 1：清空当前进程的内存
+    //      释放代码段（原来的 Shell 指令没了）
+    //      释放数据段（全局变量没了）
+    //      释放堆（malloc 的内存没了）
+    //      释放栈（局部变量没了）
+    // 步骤 2：加载新程序
+    //      打开你指定的文件 ./ls
+    //      读取它的 ELF 头部（可执行文件格式）
+    //      将 ls 的代码段加载进来
+    //      将 ls 的数据段加载进来
+    //      初始化新的栈和堆
+    // 步骤 3：跳转执行
+    //      CPU 的指令指针（IP）指向新程序的入口点（_start 或 main）
+    //      开始执行 ls 的第一条指令
+    //      所以这个 launch 可以运行任何的外部程序(可执行文件)!
     pid_t pid, wpid;
     int status;
     pid = fork();
