@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h> // for chdir
+#include <sys/wait.h>
 
 #define EXIT_SUCESS 0
 #define EXIT_FALURE 1
@@ -35,7 +36,7 @@ void lsh_loop(void);
 
 
 // 主函数
-int main(int argc, char **argv) {
+int main() {
     lsh_loop();
     return EXIT_SUCESS;
 }
@@ -44,12 +45,20 @@ void lsh_loop(void) {
     char * line;
     char ** args;
     int status;
+    char cwd[1024];
     do {
-        printf("> ");
+        // 获取当前目录并打印提示符
+        if (getcwd(cwd, sizeof(cwd)) != NULL) {
+            printf("%s> ", cwd);
+        } else {
+            printf("> ");  // 获取失败时退化为简单提示符
+        }
+
         line = lsh_read_line();
-        char ** args = lsh_split_line(line);
+
+        args = lsh_split_line(line);
         status = lsh_execute(args);
-    }
+    } while (status);
 }
 
 char* lsh_read_line(void) {
@@ -62,7 +71,7 @@ char* lsh_read_line(void) {
     // 注意：getline 保留换行符
     // getline 需要修改这两个变量,所以传入的是引用
 
-    if(getline(&line, &buff_size,stdin)) {
+    if(getline(&line, &buff_size,stdin) == -1) {
         if(feof(stdin)){
             exit(EXIT_SUCESS);
         } else {
@@ -127,7 +136,7 @@ char ** lsh_split_line (char* line) {
                 // # - printf 的内容 → 去了 output.txt（用户可能看不到错误）
                 // # - fprintf(stderr, ...) → 仍然显示在屏幕上（用户能看到错误）
                 fprintf(stderr,"allocation errors \n");
-                exit(EXIT_FAILURE)
+                exit(EXIT_FAILURE);
             }
             token = strtok(NULL,LSH_TOK_DELIM);
         }
@@ -138,13 +147,11 @@ char ** lsh_split_line (char* line) {
 
 char* builtin_str[] = {
     "cd",
-    "help",
     "exit"
 };
 
-int (*builtin_func[]) (char**) {
-    &lsh_cd, 
-    &lsh_help, 
+int (*builtin_func[]) (char**) = {
+    &lsh_cd,  
     &lsh_exit
 };
 
@@ -159,16 +166,68 @@ int lsh_cd(char ** args) {
     if(args[1] == NULL) {
         fprintf(stderr, "lsh : expected arguments to \"cd\" \n");
     } else {
-        if(chdir(args[1] != 0)) {
+        // chdir 成功返回 0 失败返回 1
+        if(chdir(args[1]) != 0) {
             perror("lsh");
         }
     }
     return 1;
 }
 
+int lsh_exit (char ** args) {
+    return 0;
+}
+
+int lsh_launch(char **args) {
+    pid_t pid, wpid;
+    int status;
+    pid = fork();
+    // | 视角 | `pid` 的值 |
+    // |------|-----------|
+    // | 父进程 | 子进程的 PID（大于 0） |
+    // | 子进程 | 0 |
+    if (pid == 0) {
+        // child process
+        if(execvp(args[0],args) == -1) {
+            perror("lsh");
+            exit(EXIT_FAILURE);
+        }
+    } else if (pid < 0) {
+        perror("lsh");
+        // why not we exit here ??
+    } else {
+        do {
+            wpid = waitpid(pid, &status, WUNTRACED);
+            //WIFEXITED 和 WIFSIGNALED 是 
+            // | 宏 | 什么时候为真（非 0） |
+            // |---|---|
+            // | `WIFEXITED(status)`   | 子进程正常退出（调用了 `exit` 或 `return`）|
+            // | `WIFSIGNALED(status)` | 子进程被信号杀死（比如段错误、`kill -9`） |
+        } while (!WIFEXITED(status) && !WIFSIGNALED(status));
+        // 这里的 waitpid实际上是对status进行修改，然后交由循环判断!
+        // 可是为什么这里需要循环呢??
+        // 因为我们知道: 虽然 waitpid一次就可以得到结果，但是问题是这并不意味着正真的退出!
+        // 只有WIFEXITED 和 WIFSIGNALED是正真的退出了!
+        // 那么那些不是真正的退出呢??
+        // 用户按下 Ctrl+Z 时，前台进程组会收到 SIGTSTP 信号，默认动作是暂停进程。
+        // $ ./long_running_program
+        // ^Z
+        // [1]+  Stopped                 ./long_running_program
+        // 但是其实是可以通过 fg 回复的!!
+    }
+    return 1;
+}
+
 int lsh_execute(char ** args) {
-    if (args[0] = NULL) {
+    if (args[0] == NULL) {
         // An empty conmmad is input
+        // 为什么我们是检测是否 args[0] = NULL 也就是第一个token是 空的(这其实是说明了全部的都是delimiter)
         return 1;
     }
+    for (int i = 0; i < lsh_num_builtins();i++) {
+        if(strcmp(args[0],builtin_str[i]) == 0) {
+            return (*builtin_func[i])(args);
+        }
+    }
+    return lsh_launch(args);
 }
