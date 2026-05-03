@@ -6,8 +6,6 @@
 #include <unistd.h> // for chdir
 #include <sys/wait.h>
 
-#define EXIT_SUCESS 0
-#define EXIT_FALURE 1
 
 // 常量定义
 #define LSH_RL_BUFSIZE 1024
@@ -38,7 +36,7 @@ void lsh_loop(void);
 // 主函数
 int main() {
     lsh_loop();
-    return EXIT_SUCESS;
+    return EXIT_SUCCESS;
 }
 
 void lsh_loop(void) {
@@ -76,11 +74,11 @@ char* lsh_read_line(void) {
     // 这里的 line是被 getline 自动调用 malloc 分配空间的,所以后面要 free (line) 
     if(getline(&line, &buff_size,stdin) == -1) {
         if(feof(stdin)){
-            exit(EXIT_SUCESS);
+            exit(EXIT_SUCCESS);
         } else {
             //错误会被自动设置(而且你也不知道是什么原因,当然只能是系统自己设置)
             perror("readline error");
-            exit(EXIT_FALURE);
+            exit(EXIT_FAILURE);
         }
     }
     return line;
