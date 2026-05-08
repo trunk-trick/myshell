@@ -44,6 +44,7 @@ void remove_alias(char* key);
 char** expand_alias_tokens(char** args);
 char* preprocess_pipe(char* line);
 void load_aliases();
+void expand_tilde(char **args);
 
 // 内置命令函数声明:
 int lsh_cd(char **args);
@@ -92,6 +93,7 @@ void lsh_loop(void) {
 
         printf("==========DEBUG=========\n");
         args = lsh_split_line(processed);
+        expand_tilde(args);
         // 最后解析出来的args(tokens结果) 用来DEBUG !
         for (int i = 0; args[i] != NULL;i++) {
             printf("DEBUG :args[%d]: %s \n",i,args[i]);
@@ -104,6 +106,24 @@ void lsh_loop(void) {
         free(processed);
         free_tokens(args);
     } while (status);
+}
+
+void expand_tilde(char **args) {
+    char *home = getenv("HOME");
+    if(!home) return;
+    char* place;
+    char* expanded = malloc(LSH_TOK_BUFSIZE);
+
+    for(int i = 0;args[i] != NULL;i++) {
+        if(place = strchr(args[i],'~')){
+            int before = strlen(args[i]) - strlen(place);
+            strncpy(expanded,args[i],before);
+            strcpy(expanded + before,home);
+            strcpy(expanded + before + strlen(home),args[i] + before + 1);
+            free(args[i]);
+            args[i] = expanded;
+        }
+    }
 }
 
 void load_aliases() {
@@ -274,6 +294,7 @@ int lsh_execute_pipe(char **args) {
     //   - 不重定向 stdout（输出到终端）
     pid_t pids[num_cmds];
     for (int i = 0; i < num_cmds;i++) {
+        //管道不保证子进程的执行顺序，也不需要保证。
         pids[i] = fork();
         if(pids[i] == 0) {
             //下面是重定向:
