@@ -1,6 +1,5 @@
 ## README.md
 
-```markdown
 # lsh - 一个简单的 Linux Shell
 
 一个用 C 语言从零开始编写的 Linux Shell，支持管道、重定向、别名、历史记录等功能。
@@ -160,4 +159,3 @@ stdout → pipe0 → stdin
 
 - [Tutorial - Write a Shell in C](https://brennan.io/2015/01/16/write-a-shell-in-c/) by Stephen Brennan
 - APUE（Advanced Programming in the UNIX Environment）
-```
