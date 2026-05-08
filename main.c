@@ -5,6 +5,8 @@
 #include <string.h>
 #include <unistd.h> // for chdir
 #include <sys/wait.h>
+#include <stdbool.h>
+
 
 #define LSH_ALIAS_COUNT 100
 
@@ -39,8 +41,9 @@ int lsh_launch(char **args);
 int lsh_execute(char **args);
 void add_alias(char* key,char* value);
 void remove_alias(char* key);
-char** expand_alias_tokens(char** args)；
+char** expand_alias_tokens(char** args);
 char* preprocess_pipe(char* line);
+void load_aliases();
 
 // 内置命令函数声明:
 int lsh_cd(char **args);
@@ -71,9 +74,9 @@ void lsh_loop(void) {
     char* expanded = NULL;
     char* processed;
     char ** args = NULL;
-    char ** expanded_alias_args = NULL;
     int status;
     char cwd[1024] = {0};
+    load_aliases();
     do {
         // 获取当前目录并打印提示符
         if (getcwd(cwd, sizeof(cwd)) != NULL) {
@@ -89,20 +92,13 @@ void lsh_loop(void) {
 
         printf("==========DEBUG=========\n");
         args = lsh_split_line(processed);
-        expanded_alias_args = expand_alias_tokens(args);
         // 最后解析出来的args(tokens结果) 用来DEBUG !
-        for (int i = 0; expanded_alias_args[i] != NULL;i++) {
-            printf("DEBUG :args[%d]: %s \n",i,expanded_alias_args[i]);
+        for (int i = 0; args[i] != NULL;i++) {
+            printf("DEBUG :args[%d]: %s \n",i,args[i]);
         }
         printf("==========OUTPUT========\n");
-        for (int i = 0; args[i] != NULL;i ++) {
-            //这里是 "|" 还是 '|' 呢 ?
-            if(strcmp(args[i],"|") == 0) {
-                status = lsh_execute_pipe(args);
-            } 
-        }
 
-        status = lsh_execute(expanded_alias_args);
+        status = lsh_execute(args);
         free(line);
         free(expanded);
         free(processed);
@@ -219,6 +215,7 @@ char * preprocess_pipe(char* line){
 // grep * 和  grep "*" 是完全不一样的 ，但是这个是shell
 int lsh_execute_pipe(char **args) {
     int num_cmds = 1;
+    int split_part_token;
     for(int i = 0; args[i] != NULL; i++) {
         //逐个计数token,记录管道中间的命令个数
         if(strcmp(args[i],"|") == 0) {
@@ -238,13 +235,14 @@ int lsh_execute_pipe(char **args) {
         }
     }
 
-
+    bool free_list[1024] = {0};
 
     //下面处理管道的 alias 设置:
     for (int i = 0;i <= cmd_index;i++) {
         for (int j = 0; j < alias_count;j++) {
             if(strcmp(cmd_starts[i][0],aliases[j].key) == 0) {
-                
+                cmd_starts[i] = expand_alias_tokens(cmd_starts[i]);
+                free_list[i] = true;
             }
         }
     }
@@ -324,6 +322,11 @@ int lsh_execute_pipe(char **args) {
         waitpid(pids[i],NULL,0);
     }
     // 父进程
+    for(int i = 0; i < 1024;i++) {
+        if(free_list[i]){
+            free(cmd_starts[i]);
+        }
+    }
     return 1;
 }
 
@@ -350,7 +353,7 @@ char* lsh_history_expand(char * dirty_line) {
             // 所以为了避免这个问题，同时也是保持语义的一致性，避免后面分类 我们仍然使用 strdup 分配内存
             return strdup("\n");
         }
-        char* last_cmd = strdup(history_cmd[history_count - 2]);
+        char* last_cmd = strdup(history_cmd[history_count - 1]);
         //解释: strcspn 是找到了第一个"\n" 的索引位置!,在这里是为了去掉"\n"，设置为 "\0" 相当于切除后面的所有内容!
         // ‘i ’ 和 "i" 一个是 char 一个是 char* 
         last_cmd[strcspn(last_cmd,"\n")] = '\0';
@@ -595,18 +598,13 @@ int lsh_alias(char** args) {
     if(eq) {
         *eq = '\0';
         char* key = args[1];
-        printf("the text after being processed is : %s\n",key);
         char* value = args[2];
-        printf("The value : %s\n",value);
         add_alias(key,value);
     }
     return 1;
 }
 
 int lsh_cd(char ** args) {
-    for (int i = 0; args[i] != NULL; i++) {
-        fprintf(stderr, "DEBUG cd: args[%d] = '%s'\n", i, args[i]);
-    }
 
     //printf("===Tian's shell====\n");
     //printf("===redirecting to \"%s\"\n",args[1]);
@@ -675,7 +673,7 @@ int lsh_launch(char **args) {
 }
 
 char** expand_alias_tokens(char** args) {
-    char** expanded_args;
+    char** expanded_args = malloc(LSH_ALIAS_COUNT * 8);
     char** split_part_args = NULL;
     int index = 0;
     for (int i = 0; i < alias_count;i++) {
@@ -689,14 +687,15 @@ char** expand_alias_tokens(char** args) {
         break;
     }
     // 这一行很重要为什么呢
-    expanded_args[index] = NULL;
 
-    for (int i = 0; args[i] != NULL;i++) {
+    for (int i = 0; args[i] != NULL || (i == 0);i++) {
         if(args[i]){
             expanded_args[index] = args[i];
             index++;
         }
     }
+    expanded_args[index] = NULL;
+
     free(split_part_args);
     return expanded_args;
 }
@@ -708,6 +707,12 @@ int lsh_execute(char ** args) {
         // 为什么我们是检测是否 args[0] = NULL 也就是第一个token是 空的(这其实是说明了全部的都是delimiter)
         return 1;
     }
+    for (int i = 0; args[i] != NULL;i ++) {
+        //这里是 "|" 还是 '|' 呢 ?
+        if(strcmp(args[i],"|") == 0) {
+            return lsh_execute_pipe(args);
+        } 
+    }   
 
     // 这里的处理要注意了，展开只是在第一个token上面
     // 例如:
@@ -718,7 +723,6 @@ int lsh_execute(char ** args) {
     // README.md  main  main.c  my_func  output  te  test   
 
     expanded_args = expand_alias_tokens(args);
-    printf ("\n");
     for (int i = 0; i < lsh_num_builtins();i++) {
         if(strcmp(expanded_args[0],builtin_str[i]) == 0) {
             //free(split_part_args);
